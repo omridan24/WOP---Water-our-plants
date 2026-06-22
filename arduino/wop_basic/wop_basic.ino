@@ -1,17 +1,18 @@
 /*
  * WOP - Water Our Plants
  * Basic Arduino Sketch - Serial Communication
- * 
- * Phase 1: USB Serial - sends basic stats
- * Phase 2: Add real sensors (soil moisture, water depth)
- * Phase 3: Bluetooth (HC-05/HM-10) communication
- * Phase 4: Water pump control
+ * * Phase 2: Real Sensors Integrated (Moisture & Water Level)
  */
 
-// ===== PIN DEFINITIONS (uncomment when you wire sensors) =====
-// #define SOIL_MOISTURE_PIN A0
-// #define WATER_DEPTH_PIN   A1
+#include <Wire.h>
+
+// ===== PIN DEFINITIONS =====
+#define SOIL_MOISTURE_PIN A0
 // #define PUMP_RELAY_PIN    7
+
+// ===== WATER LEVEL SENSOR I2C ADDRESSES =====
+#define ATTINY1_HIGH_ADDR 0x78
+#define ATTINY2_LOW_ADDR  0x77
 
 // ===== SETTINGS =====
 const unsigned long SEND_INTERVAL = 2000; // Send data every 2 seconds
@@ -22,6 +23,7 @@ bool pumpState = false;
 
 void setup() {
   Serial.begin(BAUD_RATE);
+  Wire.begin(); // Start I2C communication for the water level sensor
   
   // Uncomment when you add the pump relay
   // pinMode(PUMP_RELAY_PIN, OUTPUT);
@@ -68,19 +70,40 @@ void sendData() {
 }
 
 int readSoilMoisture() {
-  // TODO: Replace with real sensor reading
-  // return analogRead(SOIL_MOISTURE_PIN);
-  
-  // Simulated value (0-1023) - fluctuates around 500
-  return 450 + random(0, 100);
+  // Grove Moisture Sensor connected to A0
+  // Returns raw analog value (0-1023)
+  // ~0-300 = Dry | ~300-700 = Moist | ~700+ = In water
+  return analogRead(SOIL_MOISTURE_PIN);
 }
 
 int readWaterDepth() {
-  // TODO: Replace with real sensor reading
-  // return analogRead(WATER_DEPTH_PIN);
-  
-  // Simulated value (0-1023) - fluctuates around 700
-  return 650 + random(0, 100);
+  // Grove Water Level Sensor 10cm (I2C)
+  int touchedPads = 0;
+  byte val;
+
+  // Read the 12 high-level sections (address 0x78)
+  Wire.beginTransmission(ATTINY1_HIGH_ADDR);
+  Wire.write(0x01); 
+  Wire.endTransmission();
+  Wire.requestFrom(ATTINY1_HIGH_ADDR, 12);
+  while (Wire.available()) {
+    val = Wire.read();
+    if (val > 100) { touchedPads++; }
+  }
+
+  // Read the 8 low-level sections (address 0x77)
+  Wire.beginTransmission(ATTINY2_LOW_ADDR);
+  Wire.write(0x01);
+  Wire.endTransmission();
+  Wire.requestFrom(ATTINY2_LOW_ADDR, 8);
+  while (Wire.available()) {
+    val = Wire.read();
+    if (val > 100) { touchedPads++; }
+  }
+
+  // The sensor has 20 capacitive pads total, each representing roughly 5mm of water.
+  // Multiplying the touched pads by 5 gives us the water depth in millimeters (0 to 100 mm).
+  return touchedPads * 5; 
 }
 
 void handleCommand(String cmd) {
