@@ -1,14 +1,22 @@
 /*
  * WOP - Water Our Plants
- * Basic Arduino Sketch - Serial Communication
- * * Phase 2: Real Sensors Integrated (Moisture & Water Level)
+ * Arduino Sketch - USB Serial + BLE Wireless
+ * Phase 3: Grove BLE (HM-11) wireless link added
+ *
+ * USB Serial  = debug monitor (always available via cable)
+ * SoftwareSerial = Grove BLE module on D2/D3 (wireless to desktop app)
  */
 
 #include <Wire.h>
+#include <SoftwareSerial.h>
 
 // ===== PIN DEFINITIONS =====
 #define SOIL_MOISTURE_PIN A0
-// #define PUMP_RELAY_PIN    7
+#define PUMP_PIN 9
+
+// ===== BLE MODULE PINS (Grove UART socket) =====
+#define BLE_RX_PIN 2   // Arduino D2 ← BLE TX
+#define BLE_TX_PIN 3   // Arduino D3 → BLE RX
 
 // ===== WATER LEVEL SENSOR I2C ADDRESSES =====
 #define ATTINY1_HIGH_ADDR 0x78
@@ -18,31 +26,60 @@
 const unsigned long SEND_INTERVAL = 2000; // Send data every 2 seconds
 const long BAUD_RATE = 9600;
 
+// ===== BLE SERIAL =====
+SoftwareSerial ble(BLE_RX_PIN, BLE_TX_PIN); // RX, TX
+
 unsigned long lastSendTime = 0;
 bool pumpState = false;
 
+// Buffer for BLE incoming data (commands may arrive in small BLE packets)
+String bleCommandBuffer = "";
+
 void setup() {
   Serial.begin(BAUD_RATE);
+  ble.begin(BAUD_RATE);
   Wire.begin(); // Start I2C communication for the water level sensor
   
-  // Uncomment when you add the pump relay
-  // pinMode(PUMP_RELAY_PIN, OUTPUT);
-  // digitalWrite(PUMP_RELAY_PIN, LOW);
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW);
   
-  // Wait for serial connection
-  while (!Serial) { ; }
+  // Wait for USB serial connection (only blocks when USB is connected)
+  // Timeout after 2 seconds so the Arduino works without USB too
+  unsigned long serialWaitStart = millis();
+  while (!Serial && (millis() - serialWaitStart < 2000)) { ; }
   
-  // Send handshake identifier so the desktop app can confirm it's a WOP device
+  // Send handshake on BOTH channels
   Serial.println("WOP:HELLO");
+  ble.println("WOP:HELLO");
   delay(100);
 }
 
 void loop() {
-  // Check for incoming commands from desktop app
+  // --- Check USB Serial for commands ---
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();
-    handleCommand(command);
+    handleCommand(command, false);
+  }
+
+  // --- Check BLE for commands ---
+  // BLE data may arrive in small chunks (max ~20 bytes per BLE packet),
+  // so we buffer until we get a newline.
+  while (ble.available()) {
+    char c = ble.read();
+    if (c == '\n' || c == '\r') {
+      bleCommandBuffer.trim();
+      if (bleCommandBuffer.length() > 0) {
+        handleCommand(bleCommandBuffer, true);
+        bleCommandBuffer = "";
+      }
+    } else {
+      bleCommandBuffer += c;
+      // Safety: prevent buffer overflow from garbage data
+      if (bleCommandBuffer.length() > 64) {
+        bleCommandBuffer = "";
+      }
+    }
   }
 
   // Send sensor data at regular intervals
@@ -52,6 +89,12 @@ void loop() {
   }
 }
 
+// Helper: print a line to both USB Serial and BLE
+void sendLine(const String &line) {
+  Serial.println(line);
+  ble.println(line);
+}
+
 void sendData() {
   // Format: WOP:DATA:soilMoisture,waterDepth,pumpState,uptimeSeconds
   
@@ -59,14 +102,16 @@ void sendData() {
   int waterDepth = readWaterDepth();
   unsigned long uptimeSec = millis() / 1000;
   
-  Serial.print("WOP:DATA:");
-  Serial.print(soilMoisture);
-  Serial.print(",");
-  Serial.print(waterDepth);
-  Serial.print(",");
-  Serial.print(pumpState ? "1" : "0");
-  Serial.print(",");
-  Serial.println(uptimeSec);
+  String msg = "WOP:DATA:";
+  msg += soilMoisture;
+  msg += ",";
+  msg += waterDepth;
+  msg += ",";
+  msg += (pumpState ? "1" : "0");
+  msg += ",";
+  msg += uptimeSec;
+  
+  sendLine(msg);
 }
 
 int readSoilMoisture() {
@@ -106,25 +151,40 @@ int readWaterDepth() {
   return touchedPads * 5; 
 }
 
-void handleCommand(String cmd) {
+void handleCommand(String cmd, bool fromBLE) {
+  // Log which channel the command came from (debug)
+  Serial.print("[CMD ");
+  Serial.print(fromBLE ? "BLE" : "USB");
+  Serial.print("] ");
+  Serial.println(cmd);
+
+  String response = "";
+  
   if (cmd == "PING") {
-    Serial.println("WOP:PONG");
+    response = "WOP:PONG";
   }
   else if (cmd == "PUMP_ON") {
     pumpState = true;
-    // digitalWrite(PUMP_RELAY_PIN, HIGH);
-    Serial.println("WOP:ACK:PUMP_ON");
+    digitalWrite(PUMP_PIN, HIGH);
+    response = "WOP:ACK:PUMP_ON";
   }
   else if (cmd == "PUMP_OFF") {
     pumpState = false;
-    // digitalWrite(PUMP_RELAY_PIN, LOW);
-    Serial.println("WOP:ACK:PUMP_OFF");
+    digitalWrite(PUMP_PIN, LOW);
+    response = "WOP:ACK:PUMP_OFF";
   }
   else if (cmd == "STATUS") {
     sendData();
+    return; // sendData already sends on both channels
   }
   else {
-    Serial.print("WOP:ERR:UNKNOWN_CMD:");
-    Serial.println(cmd);
+    response = "WOP:ERR:UNKNOWN_CMD:" + cmd;
+  }
+
+  // Send response back on the channel it came from
+  if (fromBLE) {
+    ble.println(response);
+  } else {
+    Serial.println(response);
   }
 }
