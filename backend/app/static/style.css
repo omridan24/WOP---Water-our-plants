@@ -666,10 +666,15 @@ body::before {
     color: var(--text-secondary);
 }
 
-#history-chart {
+.chart-container {
+    position: relative;
     width: 100%;
     height: 250px;
-    border-radius: var(--radius-sm);
+}
+
+#history-chart {
+    width: 100% !important;
+    height: 100% !important;
 }
 
 /* ─── Device Info ────────────────────────────────────────────────── */

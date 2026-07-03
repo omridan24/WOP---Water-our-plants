@@ -251,9 +251,10 @@ class BLEBridge:
                     logger.info("Connected to %s", dev.address)
 
                     # Subscribe to notifications
+                    loop = asyncio.get_running_loop()
                     await client.start_notify(
                         settings.hm11_char_uuid,
-                        lambda sender, data, _d=dev: asyncio.ensure_future(
+                        lambda sender, data, _d=dev, _l=loop: _l.create_task(
                             self._handle_rx(_d, data)
                         ),
                     )
@@ -297,6 +298,7 @@ class BLEBridge:
         """Handle incoming BLE notification data. Buffer until newline."""
         try:
             text = data.decode("utf-8", errors="ignore")
+            logger.info("RX [%s]: %s", dev.address, repr(text))
         except Exception:
             return
 
@@ -358,6 +360,7 @@ class BLEBridge:
 
         try:
             payload = f"{command}\n".encode("utf-8")
+            logger.info("TX [%s]: %s", address, repr(payload))
             await dev.client.write_gatt_char(
                 settings.hm11_char_uuid, payload, response=False
             )

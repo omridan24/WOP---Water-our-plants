@@ -20,10 +20,18 @@ from app.routers import plants, sensors, pump
 
 # ─── Logging ─────────────────────────────────────────────────────────
 
+log_dir = Path(settings.db_path).parent
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / "wop.log"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(log_file)
+    ]
 )
 logger = logging.getLogger("wop")
 
