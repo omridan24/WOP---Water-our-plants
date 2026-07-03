@@ -250,9 +250,13 @@ class BLEBridge:
 
                     logger.info("Connected to %s", dev.address)
 
-                    # Subscribe to notifications
+                    # Subscribe to notifications (delay slightly for BlueZ GATT discovery on Pi)
+                    await asyncio.sleep(1.5)
                     async def notify_handler(sender, data):
-                        await self._handle_rx(dev, data)
+                        try:
+                            await self._handle_rx(dev, data)
+                        except Exception as e:
+                            logger.error("Notify wrapper error: %s", e)
                         
                     await client.start_notify(
                         settings.hm11_char_uuid,
