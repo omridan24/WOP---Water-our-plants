@@ -8,8 +8,9 @@ services:
     volumes:
       - ./data:/app/data
       - /var/run/dbus:/var/run/dbus  # Required for BLE access
+    env_file:
+      - .env
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - WOP_DB_PATH=/app/data/wop.db
       - WOP_IMAGES_DIR=/app/data/images
     # Required for Bluetooth access from inside Docker

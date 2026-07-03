@@ -10,9 +10,15 @@ let ws = null;
 
 // ─── DOM Elements ──────────────────────────────────────────────────
 const els = {
-    grid: document.getElementById('plant-grid'),
+    // Views
+    plantGrid: document.getElementById('plant-grid'),
+    deviceGrid: document.getElementById('device-grid'),
     emptyState: document.getElementById('empty-state'),
     detailView: document.getElementById('plant-detail'),
+    
+    // Tabs
+    tabPlants: document.getElementById('tab-plants'),
+    tabDevices: document.getElementById('tab-devices'),
     
     // Add Plant Modal
     addModal: document.getElementById('add-plant-modal'),
@@ -71,8 +77,11 @@ async function init() {
 }
 
 function setupEventListeners() {
-    // Navigation
-    document.getElementById('btn-back').addEventListener('click', showGrid);
+    // Navigation Tabs
+    els.tabPlants.addEventListener('click', () => switchView('plants'));
+    els.tabDevices.addEventListener('click', () => switchView('devices'));
+    
+    document.getElementById('btn-back').addEventListener('click', () => switchView('plants'));
     document.getElementById('btn-add-plant').addEventListener('click', () => showAddModal());
     document.getElementById('btn-add-first').addEventListener('click', () => showAddModal());
     
@@ -99,7 +108,8 @@ function setupEventListeners() {
     });
     
     // BLE Scan
-    els.btnScanBle.addEventListener('click', handleBleScan);
+    els.btnScanBle.addEventListener('click', () => handleBleScan('plant-ble-address', 'ble-scan-results', els.btnScanBle));
+    document.getElementById('btn-scan-ble-edit').addEventListener('click', () => handleBleScan('edit-ble', 'ble-scan-results-edit', document.getElementById('btn-scan-ble-edit')));
     
     // Pump Controls
     els.btnPumpOn.addEventListener('click', () => sendPumpCommand('on'));
@@ -122,8 +132,7 @@ function setupEventListeners() {
         if (confirm(`Are you sure you want to delete ${currentPlant.name}?`)) {
             try {
                 await fetch(`/api/plants/${currentPlant.id}`, { method: 'DELETE' });
-                showGrid();
-                fetchPlants();
+                switchView('plants');
             } catch (err) {
                 console.error("Failed to delete plant:", err);
                 alert("Failed to delete plant");
@@ -143,7 +152,11 @@ async function fetchPlants() {
     try {
         const res = await fetch('/api/plants');
         plants = await res.json();
-        renderGrid();
+        
+        // If we are on the plants view, render it
+        if (els.tabPlants.classList.contains('active') && els.detailView.style.display === 'none') {
+            renderPlantGrid();
+        }
     } catch (err) {
         console.error("Failed to fetch plants:", err);
     }
@@ -181,22 +194,52 @@ async function updateOverallBleStatus() {
             els.bleStatusText.textContent = `BLE: Offline (0/${devices.length})`;
             els.bleIndicator.classList.add('disconnected');
         }
+        
+        // If we are on the devices view, refresh it
+        if (els.tabDevices.classList.contains('active')) {
+            renderDeviceGrid(devices);
+        }
     } catch (e) {
         console.error("Failed to get BLE status", e);
     }
 }
 
 // ─── UI Rendering ──────────────────────────────────────────────────
-function renderGrid() {
+function switchView(view) {
+    if (ws) {
+        ws.close();
+        ws = null;
+    }
+    currentPlant = null;
+    els.detailView.style.display = 'none';
+    
+    if (view === 'plants') {
+        els.tabPlants.classList.add('active');
+        els.tabDevices.classList.remove('active');
+        els.deviceGrid.style.display = 'none';
+        fetchPlants().then(() => renderPlantGrid());
+    } else if (view === 'devices') {
+        els.tabDevices.classList.add('active');
+        els.tabPlants.classList.remove('active');
+        els.plantGrid.style.display = 'none';
+        els.emptyState.style.display = 'none';
+        els.deviceGrid.style.display = 'grid';
+        fetch('/api/ble/status')
+            .then(res => res.json())
+            .then(data => renderDeviceGrid(data.devices));
+    }
+}
+
+function renderPlantGrid() {
     if (plants.length === 0) {
-        els.grid.style.display = 'none';
+        els.plantGrid.style.display = 'none';
         els.emptyState.style.display = 'block';
         return;
     }
     
     els.emptyState.style.display = 'none';
-    els.grid.style.display = 'grid';
-    els.grid.innerHTML = '';
+    els.plantGrid.style.display = 'grid';
+    els.plantGrid.innerHTML = '';
     
     plants.forEach(plant => {
         const card = document.createElement('div');
@@ -244,7 +287,63 @@ function renderGrid() {
                 </div>
             </div>
         `;
-        els.grid.appendChild(card);
+        els.plantGrid.appendChild(card);
+    });
+}
+
+function renderDeviceGrid(devices) {
+    els.deviceGrid.innerHTML = '';
+    
+    if (devices.length === 0) {
+        els.deviceGrid.innerHTML = `
+            <div class="empty-state" style="grid-column: 1 / -1;">
+                <div class="empty-icon">📡</div>
+                <h2>No Arduino Devices Found</h2>
+                <p>Assign a BLE address to a plant to register a device.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    devices.forEach(d => {
+        const card = document.createElement('div');
+        card.className = 'device-card';
+        
+        const connClass = d.connected ? 'online' : 'offline';
+        const connText = d.connected ? 'Connected' : 'Disconnected';
+        
+        let plantsHtml = '';
+        if (d.plant_ids && d.plant_ids.length > 0) {
+            d.plant_ids.forEach(pid => {
+                const p = plants.find(plant => plant.id === pid);
+                if (p) {
+                    plantsHtml += `
+                        <div class="device-plant-item">
+                            🌿 ${p.name}
+                        </div>
+                    `;
+                }
+            });
+        } else {
+            plantsHtml = '<div class="device-plant-item" style="color:var(--text-muted)">No plants assigned</div>';
+        }
+        
+        card.innerHTML = `
+            <div class="device-card-header">
+                <div class="device-name">📡 ${d.device_name}</div>
+                <div class="plant-card-connection ${connClass}" style="position:static; margin:0;">
+                    <div class="connection-dot ${connClass}"></div>
+                    ${connText}
+                </div>
+            </div>
+            <div class="device-address">${d.address}</div>
+            
+            <div class="device-plants-list">
+                <h4>Assigned Plants</h4>
+                ${plantsHtml}
+            </div>
+        `;
+        els.deviceGrid.appendChild(card);
     });
 }
 
@@ -256,7 +355,8 @@ async function openPlantDetail(id) {
     currentPlant = plant;
     
     // Hide grid, show detail
-    els.grid.style.display = 'none';
+    els.plantGrid.style.display = 'none';
+    els.deviceGrid.style.display = 'none';
     els.emptyState.style.display = 'none';
     els.detailView.style.display = 'block';
     
@@ -295,17 +395,6 @@ async function openPlantDetail(id) {
     
     // Start WebSocket
     connectWebSocket(plant.id);
-}
-
-function showGrid() {
-    els.detailView.style.display = 'none';
-    fetchPlants(); // refresh grid
-    
-    if (ws) {
-        ws.close();
-        ws = null;
-    }
-    currentPlant = null;
 }
 
 // ─── Real-time Updates ─────────────────────────────────────────────
@@ -536,39 +625,41 @@ function handleImageSelect() {
     }
 }
 
-async function handleBleScan() {
-    const btn = els.btnScanBle;
-    btn.textContent = "Scanning...";
-    btn.disabled = true;
-    els.bleScanResults.innerHTML = '';
-    els.bleScanResults.style.display = 'block';
+async function handleBleScan(inputId, resultsId, btnEl) {
+    btnEl.textContent = "Scanning...";
+    btnEl.disabled = true;
+    const resultsEl = document.getElementById(resultsId);
+    const inputEl = document.getElementById(inputId);
+    
+    resultsEl.innerHTML = '';
+    resultsEl.style.display = 'block';
     
     try {
         const res = await fetch('/api/ble/scan');
         const data = await res.json();
         
         if (data.devices.length === 0) {
-            els.bleScanResults.innerHTML = '<div class="ble-scan-item"><span class="name text-muted">No devices found</span></div>';
+            resultsEl.innerHTML = '<div class="ble-scan-item"><span class="name text-muted">No WOP devices found</span></div>';
         } else {
             data.devices.forEach(d => {
                 const item = document.createElement('div');
-                item.className = `ble-scan-item ${d.is_wop ? 'is-wop' : ''}`;
+                item.className = `ble-scan-item is-wop`;
                 item.innerHTML = `
-                    <span class="name">${d.name} ${d.is_wop ? '🌿' : ''}</span>
+                    <span class="name">${d.name} 🌿</span>
                     <span class="address">${d.address}</span>
                 `;
                 item.onclick = () => {
-                    document.getElementById('plant-ble-address').value = d.address;
-                    els.bleScanResults.style.display = 'none';
+                    inputEl.value = d.address;
+                    resultsEl.style.display = 'none';
                 };
-                els.bleScanResults.appendChild(item);
+                resultsEl.appendChild(item);
             });
         }
     } catch (err) {
-        els.bleScanResults.innerHTML = '<div class="ble-scan-item"><span class="name text-danger">Scan failed</span></div>';
+        resultsEl.innerHTML = '<div class="ble-scan-item"><span class="name text-danger">Scan failed</span></div>';
     } finally {
-        btn.textContent = "📡 Scan";
-        btn.disabled = false;
+        btnEl.textContent = "📡 Scan";
+        btnEl.disabled = false;
     }
 }
 
@@ -627,6 +718,8 @@ function showEditModal() {
     document.getElementById('edit-watering').value = currentPlant.watering_frequency || '';
     document.getElementById('edit-ble').value = currentPlant.ble_address || '';
     document.getElementById('edit-notes').value = currentPlant.notes || '';
+    
+    document.getElementById('ble-scan-results-edit').style.display = 'none';
     
     document.getElementById('edit-plant-modal').style.display = 'flex';
 }

@@ -151,7 +151,7 @@ async def update_plant(plant_id: int, updates: PlantUpdate):
         old_addr = existing.get("ble_address")
         new_addr = update_data["ble_address"]
         if old_addr and old_addr != new_addr:
-            await ble_bridge.remove_device(old_addr)
+            await ble_bridge.remove_plant_from_device(old_addr, plant_id)
         if new_addr:
             await ble_bridge.add_device(new_addr, plant_id)
 
@@ -167,7 +167,7 @@ async def delete_plant(plant_id: int):
 
     # Remove BLE connection
     if plant.get("ble_address"):
-        await ble_bridge.remove_device(plant["ble_address"])
+        await ble_bridge.remove_plant_from_device(plant["ble_address"], plant_id)
 
     # Delete image file
     if plant.get("image_path") and os.path.exists(plant["image_path"]):

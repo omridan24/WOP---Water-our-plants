@@ -59,7 +59,7 @@ class SensorData:
 class DeviceConnection:
     """Tracks state for a single BLE device connection."""
     address: str
-    plant_id: Optional[int] = None
+    plant_ids: set[int] = field(default_factory=set)
     client: Optional[BleakClient] = None
     connected: bool = False
     latest_data: Optional[SensorData] = None
@@ -120,16 +120,26 @@ class BLEBridge:
     # ─── Device Management ───────────────────────────────────────────
 
     async def add_device(self, address: str, plant_id: int = None):
-        """Register a device and start connecting to it."""
+        """Register a device and start connecting to it. Supports multiple plants per device."""
         if address in self._devices:
-            # Update plant_id if it changed
-            self._devices[address].plant_id = plant_id
+            if plant_id:
+                self._devices[address].plant_ids.add(plant_id)
             return
 
-        dev = DeviceConnection(address=address, plant_id=plant_id)
+        dev = DeviceConnection(address=address)
+        if plant_id:
+            dev.plant_ids.add(plant_id)
+            
         self._devices[address] = dev
         dev._reconnect_task = asyncio.create_task(self._connect_loop(dev))
-        logger.info("Added BLE device %s (plant_id=%s)", address, plant_id)
+        logger.info("Added BLE device %s (plant_ids=%s)", address, dev.plant_ids)
+
+    async def remove_plant_from_device(self, address: str, plant_id: int):
+        """Remove a plant from a device. If no plants remain, optionally disconnect (we keep connected for now)."""
+        dev = self._devices.get(address)
+        if dev and plant_id in dev.plant_ids:
+            dev.plant_ids.remove(plant_id)
+            logger.info("Removed plant %d from BLE device %s", plant_id, address)
 
     async def remove_device(self, address: str):
         """Disconnect and remove a device."""
@@ -149,7 +159,7 @@ class BLEBridge:
 
     def get_device_by_plant(self, plant_id: int) -> Optional[DeviceConnection]:
         for dev in self._devices.values():
-            if dev.plant_id == plant_id:
+            if plant_id in dev.plant_ids:
                 return dev
         return None
 
@@ -319,19 +329,20 @@ class BLEBridge:
 
                 # Store in database at configured interval
                 now = time.time()
-                if dev.plant_id and (now - dev.last_store_time) >= self._store_interval:
+                if dev.plant_ids and (now - dev.last_store_time) >= self._store_interval:
                     dev.last_store_time = now
-                    await db.store_reading(
-                        plant_id=dev.plant_id,
-                        soil_moisture=sensor.soil_moisture,
-                        water_depth=sensor.water_depth,
-                        pump_active=sensor.pump_active,
-                        uptime_seconds=sensor.uptime_seconds,
-                    )
+                    for p_id in dev.plant_ids:
+                        await db.store_reading(
+                            plant_id=p_id,
+                            soil_moisture=sensor.soil_moisture,
+                            water_depth=sensor.water_depth,
+                            pump_active=sensor.pump_active,
+                            uptime_seconds=sensor.uptime_seconds,
+                        )
 
                 # Broadcast to WebSocket subscribers
-                if dev.plant_id:
-                    await self._notify_data(dev.plant_id, sensor)
+                for p_id in dev.plant_ids:
+                    await self._notify_data(p_id, sensor)
 
         except (ValueError, IndexError) as e:
             logger.error("Parse error: %s | line: %s", e, line)

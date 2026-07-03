@@ -32,7 +32,7 @@ async def init_db():
             name                TEXT NOT NULL DEFAULT 'New Plant',
             species             TEXT,
             image_path          TEXT,
-            ble_address         TEXT UNIQUE,
+            ble_address         TEXT,
             ideal_moisture_min  INTEGER DEFAULT 30,
             ideal_moisture_max  INTEGER DEFAULT 70,
             ideal_humidity_min  INTEGER,
@@ -56,6 +56,37 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_readings_plant_time
             ON sensor_readings(plant_id, recorded_at DESC);
     """)
+
+    # Migration: Remove UNIQUE constraint from ble_address if it exists
+    # SQLite doesn't support DROP CONSTRAINT, so we check if the table has the UNIQUE constraint
+    # by looking at the sqlite_master table SQL definition.
+    cursor = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='plants'")
+    row = await cursor.fetchone()
+    if row and "ble_address         TEXT UNIQUE" in row["sql"]:
+        # Perform table migration
+        await db.executescript("""
+            ALTER TABLE plants RENAME TO plants_old;
+            
+            CREATE TABLE plants (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                name                TEXT NOT NULL DEFAULT 'New Plant',
+                species             TEXT,
+                image_path          TEXT,
+                ble_address         TEXT,
+                ideal_moisture_min  INTEGER DEFAULT 30,
+                ideal_moisture_max  INTEGER DEFAULT 70,
+                ideal_humidity_min  INTEGER,
+                ideal_humidity_max  INTEGER,
+                light_preference    TEXT,
+                watering_frequency  TEXT,
+                notes               TEXT,
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            INSERT INTO plants SELECT * FROM plants_old;
+            DROP TABLE plants_old;
+        """)
+
     await db.commit()
 
 
@@ -135,13 +166,13 @@ async def delete_plant(plant_id: int) -> bool:
     return cursor.rowcount > 0
 
 
-async def get_plant_by_ble_address(ble_address: str) -> Optional[dict]:
+async def get_plants_by_ble_address(ble_address: str) -> list[dict]:
     db = await get_db()
     cursor = await db.execute(
         "SELECT * FROM plants WHERE ble_address = ?", (ble_address,)
     )
-    row = await cursor.fetchone()
-    return dict(row) if row else None
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
 
 
 # ─── Sensor Readings ────────────────────────────────────────────────

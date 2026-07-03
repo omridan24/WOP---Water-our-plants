@@ -43,10 +43,9 @@ WOP v2 is designed to run in Docker on a Raspberry Pi. It relies on the Pi's bui
 
 ### 2. Run the Backend
 ```bash
-cd backend
-
-# Optional: Export your Gemini API key (or put it in a .env file)
-export GEMINI_API_KEY="your_api_key_here"
+# Add your Gemini API key to the .env file for AI features
+# Open .env and replace "your_api_key_here" with your actual key
+nano .env
 
 # Start the Docker container (uses host networking and privileged mode for BLE access)
 docker compose up -d

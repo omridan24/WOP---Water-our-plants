@@ -85,9 +85,10 @@ async def serve_image(filename: str):
 
 @app.get("/api/ble/scan")
 async def scan_ble_devices():
-    """Scan for nearby BLE devices."""
+    """Scan for nearby BLE devices and filter for known WOP devices."""
     devices = await ble_bridge.scan_devices()
-    return {"devices": devices}
+    wop_devices = [d for d in devices if d["is_wop"]]
+    return {"devices": wop_devices}
 
 
 @app.get("/api/ble/status")
@@ -98,7 +99,7 @@ async def ble_status():
         "devices": [
             {
                 "address": d.address,
-                "plant_id": d.plant_id,
+                "plant_ids": list(d.plant_ids),
                 "connected": d.connected,
                 "device_name": d.device_name,
                 "has_data": d.latest_data is not None,
