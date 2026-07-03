@@ -239,6 +239,11 @@ body::before {
     font-size: 1rem;
 }
 
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
 .btn-back {
     margin-bottom: 1rem;
 }

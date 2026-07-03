@@ -331,9 +331,12 @@ function renderDeviceGrid(devices) {
         card.innerHTML = `
             <div class="device-card-header">
                 <div class="device-name">📡 ${d.device_name}</div>
-                <div class="plant-card-connection ${connClass}" style="position:static; margin:0;">
-                    <div class="connection-dot ${connClass}"></div>
-                    ${connText}
+                <div style="display:flex; gap:0.5rem; align-items:center;">
+                    <div class="plant-card-connection ${connClass}" style="position:static; margin:0;">
+                        <div class="connection-dot ${connClass}"></div>
+                        ${connText}
+                    </div>
+                    <button class="btn btn-danger-ghost btn-sm" onclick="deleteDevice('${d.address}')" title="Delete Device">🗑️</button>
                 </div>
             </div>
             <div class="device-address">${d.address}</div>
@@ -345,6 +348,22 @@ function renderDeviceGrid(devices) {
         `;
         els.deviceGrid.appendChild(card);
     });
+}
+
+async function deleteDevice(address) {
+    if (confirm(`Are you sure you want to remove the device ${address}? It will be unassigned from all plants.`)) {
+        try {
+            await fetch(`/api/ble/devices/${address}`, { method: 'DELETE' });
+            // Refresh grids
+            fetchPlants();
+            fetch('/api/ble/status')
+                .then(res => res.json())
+                .then(data => renderDeviceGrid(data.devices));
+        } catch (err) {
+            console.error("Failed to delete device:", err);
+            alert("Failed to delete device");
+        }
+    }
 }
 
 // ─── Detail View ───────────────────────────────────────────────────

@@ -109,6 +109,21 @@ async def ble_status():
     }
 
 
+@app.delete("/api/ble/devices/{address}")
+async def delete_ble_device(address: str):
+    """Disconnect and remove a BLE device, and unassign it from any plants."""
+    dev = ble_bridge.get_device(address)
+    if dev:
+        # Update database to clear ble_address for associated plants
+        for plant_id in list(dev.plant_ids):
+            await db.update_plant(plant_id, ble_address=None)
+        
+        # Remove from bridge
+        await ble_bridge.remove_device(address)
+    
+    return {"status": "deleted", "address": address}
+
+
 # ─── Static Web Dashboard ──────────────────────────────────────────
 
 # Serve static files (CSS, JS)
