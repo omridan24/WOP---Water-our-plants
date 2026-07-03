@@ -1,81 +1,120 @@
 /*
- * HM-11 AT Command Configuration Tool
+ * HM-13 Blind Configurator (D2 Socket)
  * 
- * Upload this sketch, open Serial Monitor at 9600 baud (with "No line ending"),
- * and type AT commands to configure the HM-11 module.
- * 
- * STEP-BY-STEP:
- *   1. Upload this sketch to Arduino
- *   2. Open Serial Monitor (9600 baud, "No line ending")
- *   3. Type each command below and press Enter. Wait for response.
- * 
- * COMMANDS TO SEND (in this order):
- *   AT          → Should respond "OK" (confirms communication works)
- *   AT+MODE?    → Shows current mode (should be 0 for transparent)
- *   AT+MODE0    → Set to transparent UART passthrough mode
- *   AT+ROLE?    → Shows role (should be 0 = peripheral/slave)
- *   AT+ROLE0    → Set to peripheral (if not already)
- *   AT+BAUD?    → Shows baud rate (should be 0 = 9600)
- *   AT+NOTI1    → Enable connection state notifications
- *   AT+RESET    → Reboot the module to apply changes
- * 
- * After configuration, re-upload the wop_basic.ino sketch.
- * 
- * NOTE: AT commands only work when NO BLE device is connected!
- *       Make sure your Pi is NOT running the WOP backend or debug scripts.
+ * Blindly transmits baud-rate change commands at various speeds,
+ * then checks if the module successfully changed to 9600 baud.
  */
 
 #include <SoftwareSerial.h>
 
 #define BLE_RX_PIN 2
 #define BLE_TX_PIN 3
+#define LED_PIN 13
 
 SoftwareSerial ble(BLE_RX_PIN, BLE_TX_PIN);
 
 void setup() {
+  pinMode(LED_PIN, OUTPUT);
   Serial.begin(9600);
-  ble.begin(9600);
   
-  Serial.println("================================");
-  Serial.println("HM-11 AT Command Tool");
-  Serial.println("================================");
-  Serial.println("Type AT commands in the box above.");
-  Serial.println("Set line ending to 'No line ending'");
-  Serial.println("(HM-11 AT commands have NO newline!)");
-  Serial.println("");
-  Serial.println("Try typing: AT");
-  Serial.println("Expected response: OK");
-  Serial.println("================================");
-  Serial.println("");
+  // Fast blink to indicate start
+  for(int i=0; i<5; i++) {
+    digitalWrite(LED_PIN, HIGH); delay(100);
+    digitalWrite(LED_PIN, LOW); delay(100);
+  }
+  
+  delay(2000);
+  
+  Serial.println("=================================");
+  Serial.println("HM-13 Blind Configurator");
+  Serial.println("=================================");
+  Serial.println("Yelling baud change commands...");
+  
+  long rates[] = {115200, 38400, 57600, 19200, 9600};
+  int numRates = 5;
+  
+  for (int i = 0; i < numRates; i++) {
+    ble.begin(rates[i]);
+    delay(200);
+    
+    // Command to change HM-13 to 9600 baud
+    // Try with \r\n (standard HM-13)
+    ble.print("AT+BAUD2\r\n");
+    delay(200);
+    
+    // Try without \r\n (just in case it's a weird clone)
+    ble.print("AT+BAUD2");
+    delay(200);
+    
+    // Try the HM-10/11 version of the command just in case (AT+BAUD0)
+    ble.print("AT+BAUD0\r\n");
+    delay(200);
+    ble.print("AT+BAUD0");
+    delay(200);
+    
+    // Reset to apply
+    ble.print("AT+RESET\r\n");
+    delay(200);
+    ble.print("AT+RESET");
+    delay(200);
+    
+    ble.end();
+  }
+  
+  Serial.println("Commands sent. Waiting 3 seconds for module to reboot...");
+  delay(3000);
+  
+  // ── Now verify if it worked at 9600 baud ──
+  Serial.println("Verifying at 9600 baud...");
+  ble.begin(9600);
+  delay(200);
+  
+  while (ble.available()) ble.read();
+  
+  // Test with \r\n
+  ble.print("AT\r\n");
+  String response = "";
+  unsigned long start = millis();
+  while (millis() - start < 1000) {
+    if (ble.available()) response += (char)ble.read();
+  }
+  
+  // Test without \r\n if first failed
+  if (response.indexOf("OK") < 0) {
+    ble.print("AT");
+    start = millis();
+    while (millis() - start < 1000) {
+      if (ble.available()) response += (char)ble.read();
+    }
+  }
+  
+  if (response.indexOf("OK") >= 0) {
+    Serial.println("");
+    Serial.println("✅ SUCCESS! Module is now talking at 9600 baud.");
+    
+    // Configure transparent mode (Mode 0) and Notifications (Noti 1)
+    ble.print("AT+MODE0\r\n"); delay(200); ble.print("AT+MODE0"); delay(200);
+    ble.print("AT+NOTI1\r\n"); delay(200); ble.print("AT+NOTI1"); delay(200);
+    
+    Serial.println("Configuration complete. You can now re-upload wop_basic.ino!");
+    
+    // Solid LED = SUCCESS
+    digitalWrite(LED_PIN, HIGH);
+  } else {
+    Serial.println("");
+    Serial.println("❌ FAILED. No response at 9600 baud.");
+    Serial.print("Raw garbage received (if any): [");
+    Serial.print(response);
+    Serial.println("]");
+    
+    // Slow blink = FAILED
+    while(true) {
+      digitalWrite(LED_PIN, HIGH); delay(1000);
+      digitalWrite(LED_PIN, LOW); delay(1000);
+    }
+  }
 }
 
 void loop() {
-  // Forward Serial Monitor → HM-11
-  if (Serial.available()) {
-    String cmd = Serial.readString();
-    cmd.trim();
-    Serial.print(">> Sending to HM-11: [");
-    Serial.print(cmd);
-    Serial.println("]");
-    
-    // HM-11 AT commands must NOT have \r\n
-    ble.print(cmd);
-  }
-  
-  // Forward HM-11 → Serial Monitor
-  if (ble.available()) {
-    String response = "";
-    unsigned long start = millis();
-    // Collect response for up to 500ms
-    while (millis() - start < 500) {
-      if (ble.available()) {
-        char c = ble.read();
-        response += c;
-        start = millis(); // Reset timeout on each char
-      }
-    }
-    Serial.print("<< HM-11 says: [");
-    Serial.print(response);
-    Serial.println("]");
-  }
+  // Do nothing
 }

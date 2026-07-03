@@ -9,8 +9,11 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
+from pydantic import BaseModel
+import time
 from app import database as db
 from app.ble_bridge import ble_bridge, SensorData
+from app import state
 
 logger = logging.getLogger("wop.api.sensors")
 router = APIRouter(tags=["sensors"])
@@ -32,6 +35,54 @@ async def get_readings(
         "plant_id": plant_id,
         "readings": readings,
         "count": len(readings),
+    }
+
+
+class SensorPostData(BaseModel):
+    soil_moisture: int
+    water_depth: int
+    pump_active: bool
+    uptime_seconds: int
+
+
+# Throttle database writes to once per minute per plant
+_last_store_time: dict[int, float] = {}
+
+@router.post("/api/plants/{plant_id}/readings")
+async def post_reading(plant_id: int, data: SensorPostData):
+    """
+    Receive live telemetry from ESP32 via Wi-Fi.
+    Returns any pending pump commands in the response.
+    """
+    sensor_data = SensorData(
+        soil_moisture=data.soil_moisture,
+        water_depth=data.water_depth,
+        pump_active=data.pump_active,
+        uptime_seconds=data.uptime_seconds,
+        timestamp=time.time()
+    )
+    
+    # 1. Store in DB (throttled to 60s)
+    now = time.time()
+    if now - _last_store_time.get(plant_id, 0) >= 60:
+        await db.store_reading(
+            plant_id=plant_id,
+            soil_moisture=data.soil_moisture,
+            water_depth=data.water_depth,
+            pump_active=data.pump_active,
+            uptime_seconds=data.uptime_seconds,
+        )
+        _last_store_time[plant_id] = now
+        
+    # 2. Broadcast to active WebSockets for live UI updates
+    await broadcast_sensor_data(plant_id, sensor_data)
+    
+    # 3. Retrieve any pending commands for this ESP32
+    pending_commands = state.get_and_clear_commands(plant_id)
+    
+    return {
+        "status": "ok",
+        "commands": pending_commands
     }
 
 

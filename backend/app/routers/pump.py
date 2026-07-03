@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from app import database as db
 from app.models import PumpCommand
-from app.ble_bridge import ble_bridge
+from app import state
 
 logger = logging.getLogger("wop.api.pump")
 router = APIRouter(prefix="/api/plants", tags=["pump"])
@@ -24,27 +24,10 @@ async def control_pump(plant_id: int, command: PumpCommand):
     if not plant:
         raise HTTPException(status_code=404, detail="Plant not found")
 
-    if not plant.get("ble_address"):
-        raise HTTPException(
-            status_code=400,
-            detail="No BLE device assigned to this plant",
-        )
-
-    dev = ble_bridge.get_device_by_plant(plant_id)
-    if not dev or not dev.connected:
-        raise HTTPException(
-            status_code=503,
-            detail="BLE device not connected",
-        )
-
     arduino_cmd = "PUMP_ON" if command.action == "on" else "PUMP_OFF"
-    success = await ble_bridge.send_command_to_plant(plant_id, arduino_cmd)
-
-    if not success:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to send command to Arduino",
-        )
+    
+    # Queue the command for the ESP32 to pick up on its next telemetry POST
+    state.queue_command(plant_id, arduino_cmd)
 
     logger.info("Pump %s for plant %d (%s)", command.action.upper(), plant_id, plant["name"])
 
@@ -64,8 +47,8 @@ async def ping_device(plant_id: int):
     if not plant:
         raise HTTPException(status_code=404, detail="Plant not found")
 
-    success = await ble_bridge.send_command_to_plant(plant_id, "PING")
+    state.queue_command(plant_id, "PING")
     return {
-        "status": "ok" if success else "failed",
+        "status": "queued",
         "plant_id": plant_id,
     }
