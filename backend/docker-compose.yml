@@ -1,0 +1,17 @@
+services:
+  wop:
+    build: .
+    container_name: wop-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - /var/run/dbus:/var/run/dbus  # Required for BLE access
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - WOP_DB_PATH=/app/data/wop.db
+      - WOP_IMAGES_DIR=/app/data/images
+    # Required for Bluetooth access from inside Docker
+    privileged: true
+    network_mode: host

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="WOP - Water Our Plants. Smart plant monitoring and watering dashboard.">
+    <title>WOP — Water Our Plants 🌱</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- ─── Header ─────────────────────────────────────────────── -->
+    <header class="app-header">
+        <div class="header-content">
+            <div class="logo">
+                <span class="logo-icon">🌱</span>
+                <h1>WOP</h1>
+                <span class="logo-subtitle">Water Our Plants</span>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-ghost" id="btn-ble-status" title="BLE Status">
+                    <span class="ble-indicator" id="ble-indicator"></span>
+                    <span id="ble-status-text">Checking...</span>
+                </button>
+                <button class="btn btn-primary" id="btn-add-plant">
+                    <span>+</span> Add Plant
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─── Main Content ───────────────────────────────────────── -->
+    <main class="app-main">
+        <!-- Plant Grid (default view) -->
+        <section class="plant-grid" id="plant-grid">
+            <!-- Plant cards will be injected here by JS -->
+        </section>
+
+        <!-- Empty State -->
+        <div class="empty-state" id="empty-state" style="display:none;">
+            <div class="empty-icon">🌿</div>
+            <h2>No plants yet</h2>
+            <p>Add your first plant to start monitoring.</p>
+            <button class="btn btn-primary btn-lg" id="btn-add-first">
+                <span>+</span> Add Your First Plant
+            </button>
+        </div>
+
+        <!-- Plant Detail View (hidden by default) -->
+        <section class="plant-detail" id="plant-detail" style="display:none;">
+            <button class="btn btn-ghost btn-back" id="btn-back">← Back to Plants</button>
+
+            <div class="detail-header">
+                <div class="detail-image-wrap">
+                    <img id="detail-image" src="" alt="Plant photo" class="detail-image">
+                </div>
+                <div class="detail-info">
+                    <h2 id="detail-name">Plant Name</h2>
+                    <p class="detail-species" id="detail-species">Species</p>
+                    <div class="detail-meta">
+                        <span class="meta-badge" id="detail-light">☀️ --</span>
+                        <span class="meta-badge" id="detail-watering">💧 --</span>
+                        <span class="meta-badge" id="detail-ble-badge">📡 --</span>
+                    </div>
+                    <p class="detail-notes" id="detail-notes"></p>
+                </div>
+            </div>
+
+            <!-- Live Sensor Gauges -->
+            <div class="sensor-gauges">
+                <div class="gauge-card">
+                    <div class="gauge-label">Soil Moisture</div>
+                    <div class="gauge-ring" id="gauge-moisture">
+                        <svg viewBox="0 0 120 120">
+                            <circle class="gauge-bg" cx="60" cy="60" r="52" />
+                            <circle class="gauge-fill" cx="60" cy="60" r="52" id="gauge-moisture-fill" />
+                        </svg>
+                        <div class="gauge-value" id="gauge-moisture-value">--%</div>
+                    </div>
+                    <div class="gauge-range" id="gauge-moisture-range">Ideal: 30-70%</div>
+                </div>
+                <div class="gauge-card">
+                    <div class="gauge-label">Water Level</div>
+                    <div class="gauge-ring" id="gauge-water">
+                        <svg viewBox="0 0 120 120">
+                            <circle class="gauge-bg" cx="60" cy="60" r="52" />
+                            <circle class="gauge-fill gauge-fill-blue" cx="60" cy="60" r="52" id="gauge-water-fill" />
+                        </svg>
+                        <div class="gauge-value" id="gauge-water-value">--%</div>
+                    </div>
+                    <div class="gauge-range">Reservoir depth</div>
+                </div>
+                <div class="gauge-card gauge-card-pump">
+                    <div class="gauge-label">Pump</div>
+                    <div class="pump-status" id="pump-status-display">
+                        <span class="pump-icon" id="pump-icon">⚙️</span>
+                        <span class="pump-state" id="pump-state-text">OFF</span>
+                    </div>
+                    <div class="pump-controls">
+                        <button class="btn btn-success" id="btn-pump-on">💧 Pump ON</button>
+                        <button class="btn btn-danger" id="btn-pump-off">⏹ Pump OFF</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sensor History Chart -->
+            <div class="chart-section">
+                <div class="chart-header">
+                    <h3>Sensor History</h3>
+                    <div class="chart-period-tabs">
+                        <button class="tab active" data-hours="6">6h</button>
+                        <button class="tab" data-hours="24">24h</button>
+                        <button class="tab" data-hours="72">3d</button>
+                        <button class="tab" data-hours="168">7d</button>
+                    </div>
+                </div>
+                <canvas id="history-chart" width="800" height="250"></canvas>
+            </div>
+
+            <!-- Device Info -->
+            <div class="device-info-section">
+                <h3>Device Info</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">BLE Address</span>
+                        <span class="info-value" id="detail-ble-address">--</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Arduino Uptime</span>
+                        <span class="info-value" id="detail-uptime">--</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Connection</span>
+                        <span class="info-value" id="detail-connection-status">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="detail-actions">
+                <button class="btn btn-ghost" id="btn-edit-plant">✏️ Edit</button>
+                <button class="btn btn-danger-ghost" id="btn-delete-plant">🗑️ Delete</button>
+            </div>
+        </section>
+    </main>
+
+    <!-- ─── Add Plant Modal ────────────────────────────────────── -->
+    <div class="modal-overlay" id="add-plant-modal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Add New Plant</h2>
+                <button class="btn btn-ghost modal-close" id="modal-close">&times;</button>
+            </div>
+            <form id="add-plant-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="plant-image">Plant Photo</label>
+                    <div class="image-upload" id="image-upload-zone">
+                        <input type="file" id="plant-image" name="image" accept="image/*" hidden>
+                        <div class="upload-placeholder" id="upload-placeholder">
+                            <span class="upload-icon">📸</span>
+                            <p>Click or drag a photo</p>
+                            <p class="upload-hint">AI will identify the plant automatically</p>
+                        </div>
+                        <img id="image-preview" src="" alt="Preview" class="image-preview" style="display:none;">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="plant-name">Name (optional — AI will suggest)</label>
+                    <input type="text" id="plant-name" name="name" placeholder="e.g. Kitchen Basil">
+                </div>
+                <div class="form-group">
+                    <label for="plant-ble-address">BLE Address</label>
+                    <div class="ble-address-row">
+                        <input type="text" id="plant-ble-address" name="ble_address"
+                               placeholder="e.g. AA:BB:CC:DD:EE:FF">
+                        <button type="button" class="btn btn-ghost" id="btn-scan-ble">📡 Scan</button>
+                    </div>
+                    <div class="ble-scan-results" id="ble-scan-results" style="display:none;"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-ghost" id="btn-cancel-add">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="btn-submit-plant">
+                        <span class="spinner" id="submit-spinner" style="display:none;"></span>
+                        Add Plant
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ─── Edit Plant Modal ───────────────────────────────────── -->
+    <div class="modal-overlay" id="edit-plant-modal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Edit Plant</h2>
+                <button class="btn btn-ghost modal-close" id="edit-modal-close">&times;</button>
+            </div>
+            <form id="edit-plant-form">
+                <input type="hidden" id="edit-plant-id">
+                <div class="form-group">
+                    <label for="edit-name">Name</label>
+                    <input type="text" id="edit-name">
+                </div>
+                <div class="form-group">
+                    <label for="edit-species">Species</label>
+                    <input type="text" id="edit-species">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit-moisture-min">Moisture Min %</label>
+                        <input type="number" id="edit-moisture-min" min="0" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-moisture-max">Moisture Max %</label>
+                        <input type="number" id="edit-moisture-max" min="0" max="100">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="edit-light">Light Preference</label>
+                    <input type="text" id="edit-light" placeholder="e.g. bright indirect">
+                </div>
+                <div class="form-group">
+                    <label for="edit-watering">Watering Frequency</label>
+                    <input type="text" id="edit-watering" placeholder="e.g. every 2-3 days">
+                </div>
+                <div class="form-group">
+                    <label for="edit-ble">BLE Address</label>
+                    <input type="text" id="edit-ble" placeholder="AA:BB:CC:DD:EE:FF">
+                </div>
+                <div class="form-group">
+                    <label for="edit-notes">Care Notes</label>
+                    <textarea id="edit-notes" rows="3"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-ghost" id="btn-cancel-edit">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
