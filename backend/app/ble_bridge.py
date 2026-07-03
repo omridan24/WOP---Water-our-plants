@@ -251,12 +251,12 @@ class BLEBridge:
                     logger.info("Connected to %s", dev.address)
 
                     # Subscribe to notifications
-                    loop = asyncio.get_running_loop()
+                    async def notify_handler(sender, data):
+                        await self._handle_rx(dev, data)
+                        
                     await client.start_notify(
                         settings.hm11_char_uuid,
-                        lambda sender, data, _d=dev, _l=loop: _l.create_task(
-                            self._handle_rx(_d, data)
-                        ),
+                        notify_handler
                     )
 
                     # Stay alive while connected
