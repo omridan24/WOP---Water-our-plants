@@ -1,0 +1,19 @@
+// ==========================================
+// WOP ESP32 WiFi Bridge — Configuration Template
+// ==========================================
+// Copy this file to config.h and fill in your actual values.
+// config.h is gitignored and will not be pushed to GitHub.
+// ==========================================
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// Your WiFi network
+const char* WIFI_SSID     = "YOUR_WIFI_NAME";
+const char* WIFI_PASSWORD  = "YOUR_WIFI_PASSWORD";
+
+// Raspberry Pi backend IP address (find it with: hostname -I on the Pi)
+const char* BACKEND_IP     = "YOUR_PI_IP";  // e.g. "192.168.1.100"
+const int   BACKEND_PORT   = 8080;
+
+#endif

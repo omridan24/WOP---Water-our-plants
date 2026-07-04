@@ -11,6 +11,7 @@ venv/
 *.elf
 *.hex
 *.bin
+config.h
 
 # OS
 .DS_Store

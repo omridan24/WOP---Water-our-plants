@@ -1,210 +1,232 @@
 /*
- * WOP - Water Our Plants | ESP32 Wi-Fi Version
+ * WOP - Water Our Plants | ESP32 WiFi Bridge
  *
- * Replaces the Arduino Uno + BLE setup with a single ESP32 connected to Wi-Fi.
- * Pushes data directly to the Raspberry Pi backend and pulls pending commands.
+ * This ESP32 acts as a WiFi adapter for the Arduino Uno.
+ * It does NOT read sensors or control the pump directly.
+ * It simply bridges the Arduino's serial data to the Raspberry Pi over WiFi.
  *
- * DEPENDENCIES (Install via Sketch -> Include Library -> Manage Libraries):
- *   - ArduinoJson by Benoit Blanchon (Version 7.x or 6.x)
+ * Data flow:
+ *   Arduino → [Serial UART @ 9600] → ESP32 → [WiFi HTTP POST] → Raspberry Pi
+ *   Raspberry Pi → [HTTP Response] → ESP32 → [Serial UART] → Arduino
+ *
+ * WIRING (4 jumper wires):
+ *   Arduino Shield pin 2  → ESP32 GPIO 17 (TX2)  [ESP32 sends TO Arduino]
+ *   Arduino Shield pin 3  → ESP32 GPIO 16 (RX2)  [ESP32 receives FROM Arduino]
+ *   Arduino Shield GND    → ESP32 GND             [Shared ground]
+ *   Arduino Shield 5V     → ESP32 5V pin          [Power - DISCONNECT when USB flashing!]
+ *
+ * POWER WARNING:
+ *   When uploading code via USB, DISCONNECT the 5V wire from the Arduino first!
+ *   Having two 5V sources (USB + Arduino) at the same time can damage your computer's USB port.
+ *   After uploading, unplug USB and reconnect the 5V wire.
+ *
+ * DEPENDENCIES:
+ *   - ArduinoJson by Benoit Blanchon (v6.x or 7.x)
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <Wire.h>
 #include <ArduinoJson.h>
+#include "config.h"  // WiFi credentials — gitignored, see config.h.example
 
 // ==========================================
-// CONFIGURATION - CHANGE THESE!
+// UART2 — Communication with Arduino
 // ==========================================
-const char* WIFI_SSID = "YOUR_WIFI_NETWORK_NAME";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-
-// The IP address of your Raspberry Pi (e.g., "192.168.1.100")
-const char* BACKEND_IP = "YOUR_PI_IP_ADDRESS";
-const int BACKEND_PORT = 8080;
-
-// The Plant ID that this ESP32 is monitoring
-const int PLANT_ID = 1; 
+#define ARDUINO_RX_PIN 16  // ESP32 receives data FROM Arduino on this pin
+#define ARDUINO_TX_PIN 17  // ESP32 sends data TO Arduino on this pin
+#define ARDUINO_BAUD   9600
 
 // ==========================================
-// PINS (ESP32 WROOM-32)
+// State
 // ==========================================
-#define SOIL_MOISTURE_PIN 34  // ADC1
-#define PUMP_PIN 25           // Digital Out
-// Water Level Sensor uses default I2C pins: GPIO 21 (SDA), GPIO 22 (SCL)
-
-// Water Level Sensor I2C Addresses
-#define ATTINY1_HIGH_ADDR 0x78
-#define ATTINY2_LOW_ADDR  0x77
-
-// Timing
-const unsigned long SEND_INTERVAL = 2000; // Post data every 2 seconds
-unsigned long lastSendTime = 0;
-
-bool pumpState = false;
-
-// Construct the full API URL
-String getApiUrl() {
-  return "http://" + String(BACKEND_IP) + ":" + String(BACKEND_PORT) + "/api/plants/" + String(PLANT_ID) + "/readings";
-}
+String serialBuffer = "";
+unsigned long lastWifiCheck = 0;
+const unsigned long WIFI_CHECK_INTERVAL = 30000; // 30 seconds
+String macAddress = "";
 
 void setup() {
+  // USB Serial — for debugging when connected to computer
   Serial.begin(115200);
-  Wire.begin(); // Start I2C for water level sensor
-  
-  pinMode(PUMP_PIN, OUTPUT);
-  digitalWrite(PUMP_PIN, LOW);
-  
-  // Need to wait briefly for serial monitor to catch up
+
+  // UART2 — for talking to the Arduino
+  Serial2.begin(ARDUINO_BAUD, SERIAL_8N1, ARDUINO_RX_PIN, ARDUINO_TX_PIN);
+
   delay(1000);
-  
+
   Serial.println("\n\n================================");
-  Serial.println("🌱 WOP - ESP32 Wi-Fi Starting...");
+  Serial.println("🌱 WOP - ESP32 WiFi Bridge");
   Serial.println("================================");
-  
-  // Connect to Wi-Fi
-  Serial.print("Connecting to Wi-Fi: ");
-  Serial.println(WIFI_SSID);
-  
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  
-  Serial.println("\n✅ Wi-Fi Connected!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
-  Serial.print("Backend URL: ");
-  Serial.println(getApiUrl());
+  Serial.println("Role: Serial ↔ WiFi bridge");
+  Serial.println("Arduino UART: GPIO16 (RX) / GPIO17 (TX)");
+  macAddress = WiFi.macAddress();
+  Serial.printf("Device ID (MAC): %s\n", macAddress.c_str());
+  Serial.printf("Backend: http://%s:%d\n", BACKEND_IP, BACKEND_PORT);
   Serial.println("================================\n");
+
+  connectWiFi();
 }
 
 void loop() {
-  // Reconnect Wi-Fi if dropped
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Wi-Fi disconnected. Reconnecting...");
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
+  // Periodically check WiFi is still connected
+  if (millis() - lastWifiCheck > WIFI_CHECK_INTERVAL) {
+    lastWifiCheck = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("⚠️ WiFi lost. Reconnecting...");
+      connectWiFi();
     }
-    Serial.println("\n✅ Wi-Fi Reconnected!");
   }
 
-  // Time to send data?
-  if (millis() - lastSendTime >= SEND_INTERVAL) {
-    lastSendTime = millis();
-    sendTelemetryAndFetchCommands();
+  // Read incoming bytes from the Arduino (arrives on UART2)
+  while (Serial2.available()) {
+    char c = Serial2.read();
+    if (c == '\n' || c == '\r') {
+      serialBuffer.trim();
+      if (serialBuffer.length() > 0) {
+        handleArduinoMessage(serialBuffer);
+        serialBuffer = "";
+      }
+    } else {
+      serialBuffer += c;
+      // Safety: prevent buffer overflow from garbage data
+      if (serialBuffer.length() > 128) {
+        serialBuffer = "";
+      }
+    }
   }
 }
 
-void sendTelemetryAndFetchCommands() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  
-  int moisture = readSoilMoisture();
-  int waterDepth = readWaterDepth();
-  int uptimeSec = millis() / 1000;
-  
-  Serial.printf("📊 Data: Moisture=%d, Depth=%d, Pump=%s, Uptime=%ds\n", 
-                moisture, waterDepth, pumpState ? "ON" : "OFF", uptimeSec);
-  
-  // 1. Build JSON Payload
-  StaticJsonDocument<200> doc;
-  doc["soil_moisture"] = moisture;
-  doc["water_depth"] = waterDepth;
-  doc["pump_active"] = pumpState;
-  doc["uptime_seconds"] = uptimeSec;
-  
-  String requestBody;
-  serializeJson(doc, requestBody);
-  
-  // 2. Send HTTP POST Request
-  HTTPClient http;
-  http.begin(getApiUrl());
-  http.addHeader("Content-Type", "application/json");
-  
-  int httpResponseCode = http.POST(requestBody);
-  
-  if (httpResponseCode > 0) {
-    String responseBody = http.getString();
-    // Only log if not a standard 200 OK (to keep terminal clean), or if commands exist
-    if (httpResponseCode != 200 || responseBody.indexOf("PUMP") > 0 || responseBody.indexOf("PING") > 0) {
-      Serial.printf("🌐 HTTP %d: %s\n", httpResponseCode, responseBody.c_str());
+// ==========================================
+// WiFi
+// ==========================================
+
+void connectWiFi() {
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✅ WiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n❌ WiFi failed. Will retry in 30 seconds...");
+  }
+}
+
+// ==========================================
+// Arduino Message Handler
+// ==========================================
+
+void handleArduinoMessage(String msg) {
+  // Log everything we receive from the Arduino
+  Serial.print("📥 From Arduino: ");
+  Serial.println(msg);
+
+  if (msg.startsWith("WOP:DATA:")) {
+    // Sensor data — parse and forward to backend
+    // Format: WOP:DATA:soilMoisture,waterDepth,pumpState,uptimeSeconds
+    String data = msg.substring(9);  // Remove "WOP:DATA:" prefix
+
+    int c1 = data.indexOf(',');
+    int c2 = data.indexOf(',', c1 + 1);
+    int c3 = data.indexOf(',', c2 + 1);
+
+    if (c1 < 0 || c2 < 0 || c3 < 0) {
+      Serial.println("   ❌ Bad data format — expected 4 comma-separated values");
+      return;
     }
-    
-    // 3. Parse Response for Commands
+
+    int soilMoisture   = data.substring(0, c1).toInt();
+    int waterDepth     = data.substring(c1 + 1, c2).toInt();
+    int pumpActive     = data.substring(c2 + 1, c3).toInt();
+    unsigned long uptime = strtoul(data.substring(c3 + 1).c_str(), NULL, 10);
+
+    Serial.printf("   📊 Soil=%d, Depth=%dmm, Pump=%s, Uptime=%lus\n",
+                  soilMoisture, waterDepth, pumpActive ? "ON" : "OFF", uptime);
+
+    postToBackend(soilMoisture, waterDepth, pumpActive, uptime);
+  }
+  else if (msg.startsWith("WOP:HELLO")) {
+    Serial.println("   👋 Arduino says hello — bridge is working!");
+  }
+  else if (msg.startsWith("WOP:ACK:")) {
+    Serial.printf("   ✅ Arduino acknowledged command: %s\n", msg.substring(8).c_str());
+  }
+  else if (msg.startsWith("WOP:PONG")) {
+    Serial.println("   🏓 Arduino responded to PING");
+  }
+  else if (msg.startsWith("WOP:ERR:")) {
+    Serial.printf("   ⚠️ Arduino error: %s\n", msg.substring(8).c_str());
+  }
+  else {
+    Serial.printf("   ❓ Unknown message: %s\n", msg.c_str());
+  }
+}
+
+// ==========================================
+// Backend Communication
+// ==========================================
+
+void postToBackend(int soil, int depth, int pump, unsigned long uptime) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("   ❌ No WiFi — skipping POST");
+    return;
+  }
+
+  // Build the URL: POST /api/devices/{mac_address}/readings
+  String url = String("http://") + BACKEND_IP + ":" + String(BACKEND_PORT)
+               + "/api/devices/" + macAddress + "/readings";
+
+  // Build JSON payload
+  StaticJsonDocument<200> doc;
+  doc["soil_moisture"]   = soil;
+  doc["water_depth"]     = depth;
+  doc["pump_active"]     = (pump == 1);
+  doc["uptime_seconds"]  = uptime;
+
+  String body;
+  serializeJson(doc, body);
+
+  // Send HTTP POST
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000);  // 5 second timeout
+
+  int responseCode = http.POST(body);
+
+  if (responseCode > 0) {
+    String response = http.getString();
+
+    // Parse response for any pending commands from the backend
     StaticJsonDocument<512> responseDoc;
-    DeserializationError error = deserializeJson(responseDoc, responseBody);
-    
+    DeserializationError error = deserializeJson(responseDoc, response);
+
     if (!error && responseDoc.containsKey("commands")) {
       JsonArray commands = responseDoc["commands"].as<JsonArray>();
       for (JsonVariant v : commands) {
         String cmd = v.as<String>();
-        executeCommand(cmd);
+        Serial.printf("   📤 Forwarding command to Arduino: %s\n", cmd.c_str());
+        Serial2.println(cmd);  // Send command to Arduino over UART
       }
     }
+
+    // Only log non-200 responses to keep the output clean
+    if (responseCode != 200) {
+      Serial.printf("   🌐 HTTP %d: %s\n", responseCode, response.c_str());
+    }
   } else {
-    Serial.printf("❌ HTTP POST failed. Error code: %d\n", httpResponseCode);
+    Serial.printf("   ❌ HTTP POST failed (code %d)\n", responseCode);
   }
-  
+
   http.end();
-}
-
-void executeCommand(String cmd) {
-  Serial.print("⚡ Executing Command: ");
-  Serial.println(cmd);
-  
-  if (cmd == "PUMP_ON") {
-    pumpState = true;
-    digitalWrite(PUMP_PIN, HIGH);
-  } 
-  else if (cmd == "PUMP_OFF") {
-    pumpState = false;
-    digitalWrite(PUMP_PIN, LOW);
-  }
-  else if (cmd == "PING") {
-    Serial.println("   (Ping acknowledged)");
-  }
-}
-
-// ==========================================
-// SENSOR READING FUNCTIONS
-// ==========================================
-
-int readSoilMoisture() {
-  // ESP32 ADC is 12-bit (0-4095) unlike Arduino's 10-bit (0-1023).
-  // We map it down to 0-1023 so the backend doesn't need to change!
-  int raw = analogRead(SOIL_MOISTURE_PIN);
-  return map(raw, 0, 4095, 0, 1023);
-}
-
-int readWaterDepth() {
-  // Grove Water Level Sensor 10cm (I2C)
-  int touchedPads = 0;
-  byte val;
-
-  // Read the 12 high-level sections (address 0x78)
-  Wire.beginTransmission(ATTINY1_HIGH_ADDR);
-  Wire.write(0x01); 
-  Wire.endTransmission();
-  Wire.requestFrom(ATTINY1_HIGH_ADDR, 12);
-  while (Wire.available()) {
-    val = Wire.read();
-    if (val > 100) { touchedPads++; }
-  }
-
-  // Read the 8 low-level sections (address 0x77)
-  Wire.beginTransmission(ATTINY2_LOW_ADDR);
-  Wire.write(0x01);
-  Wire.endTransmission();
-  Wire.requestFrom(ATTINY2_LOW_ADDR, 8);
-  while (Wire.available()) {
-    val = Wire.read();
-    if (val > 100) { touchedPads++; }
-  }
-
-  return touchedPads * 5; 
 }

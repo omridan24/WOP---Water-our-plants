@@ -48,12 +48,15 @@ class SensorPostData(BaseModel):
 # Throttle database writes to once per minute per plant
 _last_store_time: dict[int, float] = {}
 
-@router.post("/api/plants/{plant_id}/readings")
-async def post_reading(plant_id: int, data: SensorPostData):
+@router.post("/api/devices/{device_id}/readings")
+async def post_device_reading(device_id: str, data: SensorPostData):
     """
-    Receive live telemetry from ESP32 via Wi-Fi.
+    Receive live telemetry from ESP32 via Wi-Fi based on MAC address.
     Returns any pending pump commands in the response.
     """
+    # Track that this device is active
+    state.update_device_seen(device_id)
+    
     sensor_data = SensorData(
         soil_moisture=data.soil_moisture,
         water_depth=data.water_depth,
@@ -62,27 +65,35 @@ async def post_reading(plant_id: int, data: SensorPostData):
         timestamp=time.time()
     )
     
-    # 1. Store in DB (throttled to 60s)
-    now = time.time()
-    if now - _last_store_time.get(plant_id, 0) >= 60:
-        await db.store_reading(
-            plant_id=plant_id,
-            soil_moisture=data.soil_moisture,
-            water_depth=data.water_depth,
-            pump_active=data.pump_active,
-            uptime_seconds=data.uptime_seconds,
-        )
-        _last_store_time[plant_id] = now
+    # Find all plants configured to use this device ID
+    plants = await db.get_plants_by_ble_address(device_id)
+    all_commands = []
+    
+    for p in plants:
+        plant_id = p["id"]
         
-    # 2. Broadcast to active WebSockets for live UI updates
-    await broadcast_sensor_data(plant_id, sensor_data)
-    
-    # 3. Retrieve any pending commands for this ESP32
-    pending_commands = state.get_and_clear_commands(plant_id)
-    
+        # 1. Store in DB (throttled to 60s)
+        now = time.time()
+        if now - _last_store_time.get(plant_id, 0) >= 60:
+            await db.store_reading(
+                plant_id=plant_id,
+                soil_moisture=data.soil_moisture,
+                water_depth=data.water_depth,
+                pump_active=data.pump_active,
+                uptime_seconds=data.uptime_seconds,
+            )
+            _last_store_time[plant_id] = now
+            
+        # 2. Broadcast to active WebSockets for live UI updates
+        await broadcast_sensor_data(plant_id, sensor_data)
+        
+        # 3. Retrieve any pending commands for this ESP32
+        cmds = state.get_and_clear_commands(plant_id)
+        all_commands.extend(cmds)
+        
     return {
         "status": "ok",
-        "commands": pending_commands
+        "commands": all_commands
     }
 
 

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response
 
 from app.config import settings
 from app import database as db
-from app.ble_bridge import ble_bridge
+from app import state
 from app.routers import plants, sensors, pump
 
 # ─── Logging ─────────────────────────────────────────────────────────
@@ -49,16 +49,15 @@ async def lifespan(app: FastAPI):
     await db.init_db()
     logger.info("Database initialized: %s", settings.db_path)
 
-    # Register the WebSocket broadcaster as a BLE data callback
-    ble_bridge.on_data(sensors.broadcast_sensor_data)
-
-    await ble_bridge.start()
+    # BLE is disabled for ESP32 Wi-Fi bridge
+    # ble_bridge.on_data(sensors.broadcast_sensor_data)
+    # await ble_bridge.start()
 
     yield
 
     # Shutdown
     logger.info("Shutting down...")
-    await ble_bridge.stop()
+    # await ble_bridge.stop()
     await db.close_db()
     logger.info("Goodbye 🌿")
 
@@ -89,46 +88,58 @@ async def serve_image(filename: str):
     return FileResponse(path)
 
 
-# ─── BLE Device Discovery ──────────────────────────────────────────
+# ─── Device Discovery ──────────────────────────────────────────
 
 @app.get("/api/ble/scan")
 async def scan_ble_devices():
-    """Scan for nearby BLE devices and filter for known WOP devices."""
-    devices = await ble_bridge.scan_devices()
-    wop_devices = [d for d in devices if d["is_wop"]]
-    return {"devices": wop_devices}
+    """Scan for active devices currently sending telemetry via Wi-Fi."""
+    active_devices = state.get_active_devices()
+    devices = [
+        {"name": f"ESP32 ({addr[-5:]})", "address": addr, "is_wop": True}
+        for addr in active_devices
+    ]
+    return {"devices": devices}
 
 
 @app.get("/api/ble/status")
 async def ble_status():
-    """Get the status of all registered BLE connections."""
-    devices = ble_bridge.get_all_devices()
-    return {
-        "devices": [
-            {
-                "address": d.address,
-                "plant_ids": list(d.plant_ids),
-                "connected": d.connected,
-                "device_name": d.device_name,
-                "has_data": d.latest_data is not None,
-            }
-            for d in devices
-        ]
-    }
+    """Get the status of all registered devices."""
+    active_devices = state.get_active_devices()
+    
+    # We need to return all devices the system knows about (from active AND from DB)
+    all_plants = await db.get_all_plants()
+    assigned_addresses = {}
+    for p in all_plants:
+        addr = p.get("ble_address")
+        if addr:
+            assigned_addresses.setdefault(addr, []).append(p["id"])
+            
+    # Combine active + assigned
+    all_addresses = set(active_devices) | set(assigned_addresses.keys())
+    
+    devices_out = []
+    for addr in all_addresses:
+        devices_out.append({
+            "address": addr,
+            "plant_ids": assigned_addresses.get(addr, []),
+            "connected": addr in active_devices,
+            "device_name": f"ESP32 ({addr[-5:]})",
+            "has_data": addr in active_devices
+        })
+        
+    return {"devices": devices_out}
 
 
 @app.delete("/api/ble/devices/{address}")
 async def delete_ble_device(address: str):
-    """Disconnect and remove a BLE device, and unassign it from any plants."""
-    dev = ble_bridge.get_device(address)
-    if dev:
-        # Update database to clear ble_address for associated plants
-        for plant_id in list(dev.plant_ids):
-            await db.update_plant(plant_id, ble_address=None)
-        
-        # Remove from bridge
-        await ble_bridge.remove_device(address)
+    """Unassign a device from all plants."""
+    plants = await db.get_plants_by_ble_address(address)
+    for p in plants:
+        await db.update_plant(p["id"], ble_address=None)
     
+    if address in state.active_devices:
+        del state.active_devices[address]
+        
     return {"status": "deleted", "address": address}
 
 
