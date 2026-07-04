@@ -58,8 +58,6 @@ void setup() {
   Serial.println("================================");
   Serial.println("Role: Serial ↔ WiFi bridge");
   Serial.println("Arduino UART: GPIO16 (RX) / GPIO17 (TX)");
-  macAddress = WiFi.macAddress();
-  Serial.printf("Device ID (MAC): %s\n", macAddress.c_str());
   Serial.printf("Backend: http://%s:%d\n", BACKEND_IP, BACKEND_PORT);
   Serial.println("================================\n");
 
@@ -117,6 +115,19 @@ void connectWiFi() {
     Serial.println("\n✅ WiFi Connected!");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
+    
+    macAddress = WiFi.macAddress();
+    Serial.printf("Device ID (MAC): %s\n", macAddress.c_str());
+    
+    // Send a boot registration ping so the backend discovers this device immediately
+    HTTPClient http;
+    String url = String("http://") + BACKEND_IP + ":" + String(BACKEND_PORT)
+                 + "/api/devices/" + macAddress + "/readings";
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    // Send dummy data just to register the MAC address
+    http.POST("{\"soil_moisture\":0,\"water_depth\":0,\"pump_active\":false,\"uptime_seconds\":0}");
+    http.end();
   } else {
     Serial.println("\n❌ WiFi failed. Will retry in 30 seconds...");
   }

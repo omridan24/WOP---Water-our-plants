@@ -15,28 +15,27 @@ from app.config import settings
 from app import database as db
 from app.models import PlantCreate, PlantUpdate, PlantResponse
 from app.plant_identifier import identify_plant
-from app.ble_bridge import ble_bridge
+from app import state
 
 logger = logging.getLogger("wop.api.plants")
 router = APIRouter(prefix="/api/plants", tags=["plants"])
 
 
-def _plant_to_response(plant: dict) -> dict:
+async def _plant_to_response(plant: dict) -> dict:
     """Convert a DB plant row to a response dict with live data."""
     image_url = None
     if plant.get("image_path"):
         filename = os.path.basename(plant["image_path"])
         image_url = f"/api/images/{filename}"
 
-    # Get live BLE data if available
-    dev = ble_bridge.get_device_by_plant(plant["id"])
-    latest_reading = None
+    # Check if device is active over Wi-Fi
+    addr = plant.get("ble_address")
     ble_connected = False
+    if addr and addr in state.active_devices:
+        ble_connected = True
 
-    if dev:
-        ble_connected = dev.connected
-        if dev.latest_data:
-            latest_reading = dev.latest_data.to_dict()
+    # Get the latest reading from DB
+    latest_reading = await db.get_latest_reading(plant["id"])
 
     return {
         "id": plant["id"],
@@ -61,7 +60,7 @@ def _plant_to_response(plant: dict) -> dict:
 async def list_plants():
     """Get all plants with their latest sensor data."""
     plants = await db.get_all_plants()
-    return [_plant_to_response(p) for p in plants]
+    return [await _plant_to_response(p) for p in plants]
 
 
 @router.get("/{plant_id}")
@@ -71,7 +70,7 @@ async def get_plant(plant_id: int):
     if not plant:
         raise HTTPException(status_code=404, detail="Plant not found")
 
-    response = _plant_to_response(plant)
+    response = await _plant_to_response(plant)
 
     # Include recent readings for chart
     readings = await db.get_readings(plant_id, hours=24)
@@ -129,11 +128,7 @@ async def create_plant(
         notes=ai_data.get("care_notes"),
     )
 
-    # Register BLE device if address provided
-    if ble_address:
-        await ble_bridge.add_device(ble_address, plant["id"])
-
-    return _plant_to_response(plant)
+    return await _plant_to_response(plant)
 
 
 @router.put("/{plant_id}")
@@ -146,16 +141,7 @@ async def update_plant(plant_id: int, updates: PlantUpdate):
     update_data = updates.model_dump(exclude_none=True)
     plant = await db.update_plant(plant_id, **update_data)
 
-    # Update BLE bridge if address changed
-    if "ble_address" in update_data:
-        old_addr = existing.get("ble_address")
-        new_addr = update_data["ble_address"]
-        if old_addr and old_addr != new_addr:
-            await ble_bridge.remove_plant_from_device(old_addr, plant_id)
-        if new_addr:
-            await ble_bridge.add_device(new_addr, plant_id)
-
-    return _plant_to_response(plant)
+    return await _plant_to_response(plant)
 
 
 @router.delete("/{plant_id}")
@@ -164,10 +150,6 @@ async def delete_plant(plant_id: int):
     plant = await db.get_plant(plant_id)
     if not plant:
         raise HTTPException(status_code=404, detail="Plant not found")
-
-    # Remove BLE connection
-    if plant.get("ble_address"):
-        await ble_bridge.remove_plant_from_device(plant["ble_address"], plant_id)
 
     # Delete image file
     if plant.get("image_path") and os.path.exists(plant["image_path"]):
