@@ -65,6 +65,7 @@ async def init_db():
     if row and "ble_address         TEXT UNIQUE" in row["sql"]:
         # Perform table migration
         await db.executescript("""
+            PRAGMA foreign_keys=OFF;
             ALTER TABLE plants RENAME TO plants_old;
             
             CREATE TABLE plants (
@@ -85,6 +86,29 @@ async def init_db():
             
             INSERT INTO plants SELECT * FROM plants_old;
             DROP TABLE plants_old;
+            PRAGMA foreign_keys=ON;
+        """)
+
+    # Migration: Fix sensor_readings foreign key constraint (if it points to plants_old)
+    cursor = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='sensor_readings'")
+    row = await cursor.fetchone()
+    if row and "plants_old" in row["sql"]:
+        await db.executescript("""
+            PRAGMA foreign_keys=OFF;
+            ALTER TABLE sensor_readings RENAME TO sensor_readings_old;
+            CREATE TABLE sensor_readings (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id        INTEGER NOT NULL REFERENCES plants(id) ON DELETE CASCADE,
+                soil_moisture   INTEGER,
+                water_depth     INTEGER,
+                pump_active     BOOLEAN DEFAULT 0,
+                uptime_seconds  INTEGER,
+                recorded_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO sensor_readings SELECT * FROM sensor_readings_old;
+            DROP TABLE sensor_readings_old;
+            CREATE INDEX IF NOT EXISTS idx_readings_plant_time ON sensor_readings(plant_id, recorded_at DESC);
+            PRAGMA foreign_keys=ON;
         """)
 
     await db.commit()
