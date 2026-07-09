@@ -155,25 +155,26 @@ void handleCommand(String cmd, bool fromBLE) {
   // Log which channel the command came from (debug)
   Serial.print("[CMD ");
   Serial.print(fromBLE ? "BLE" : "USB");
-  Serial.print("] ");
-  Serial.println(cmd);
+  Serial.print("] '");
+  Serial.print(cmd);
+  Serial.println("'");
 
   String response = "";
   
-  if (cmd == "PING") {
+  if (cmd.indexOf("PING") >= 0) {
     response = "WOP:PONG";
   }
-  else if (cmd == "PUMP_ON") {
+  else if (cmd.indexOf("PUMP_ON") >= 0) {
     pumpState = true;
     digitalWrite(PUMP_PIN, HIGH);
     response = "WOP:ACK:PUMP_ON";
   }
-  else if (cmd == "PUMP_OFF") {
+  else if (cmd.indexOf("PUMP_OFF") >= 0) {
     pumpState = false;
     digitalWrite(PUMP_PIN, LOW);
     response = "WOP:ACK:PUMP_OFF";
   }
-  else if (cmd == "STATUS") {
+  else if (cmd.indexOf("STATUS") >= 0) {
     sendData();
     return; // sendData already sends on both channels
   }

@@ -63,7 +63,13 @@ const els = {
     
     // Header
     bleIndicator: document.getElementById('ble-indicator'),
-    bleStatusText: document.getElementById('ble-status-text')
+    bleStatusText: document.getElementById('ble-status-text'),
+
+    // Auto-watering
+    autowaterToggle: document.getElementById('autowater-toggle'),
+    autowaterIcon: document.getElementById('autowater-icon'),
+    autowaterStateText: document.getElementById('autowater-state-text'),
+    autowaterDesc: document.getElementById('autowater-desc'),
 };
 
 const GAUGE_CIRCUMFERENCE = 326.73;
@@ -145,6 +151,9 @@ function setupEventListeners() {
     document.getElementById('edit-modal-close').addEventListener('click', hideEditModal);
     document.getElementById('btn-cancel-edit').addEventListener('click', hideEditModal);
     document.getElementById('edit-plant-form').addEventListener('submit', handleEditPlantSubmit);
+
+    // Auto-watering toggle
+    els.autowaterToggle.addEventListener('change', handleAutoWaterToggle);
 }
 
 // ─── API Calls ─────────────────────────────────────────────────────
@@ -185,13 +194,13 @@ async function updateOverallBleStatus() {
             els.bleStatusText.textContent = "No devices";
             els.bleIndicator.classList.add('disconnected');
         } else if (connectedCount === devices.length) {
-            els.bleStatusText.textContent = `BLE: All Good (${connectedCount}/${devices.length})`;
+            els.bleStatusText.textContent = `WiFi: All Good (${connectedCount}/${devices.length})`;
             els.bleIndicator.classList.add('connected');
         } else if (connectedCount > 0) {
-            els.bleStatusText.textContent = `BLE: Partial (${connectedCount}/${devices.length})`;
+            els.bleStatusText.textContent = `WiFi: Partial (${connectedCount}/${devices.length})`;
             els.bleIndicator.classList.add('partial');
         } else {
-            els.bleStatusText.textContent = `BLE: Offline (0/${devices.length})`;
+            els.bleStatusText.textContent = `WiFi: Offline (0/${devices.length})`;
             els.bleIndicator.classList.add('disconnected');
         }
         
@@ -299,7 +308,7 @@ function renderDeviceGrid(devices) {
             <div class="empty-state" style="grid-column: 1 / -1;">
                 <div class="empty-icon">📡</div>
                 <h2>No Arduino Devices Found</h2>
-                <p>Assign a BLE address to a plant to register a device.</p>
+                <p>Assign a WiFi device to a plant to register it.</p>
             </div>
         `;
         return;
@@ -412,6 +421,10 @@ async function openPlantDetail(id) {
     const hours = activeTab ? parseInt(activeTab.dataset.hours) : 24;
     renderChart(plant.recent_readings || []);
     
+    // Auto-watering toggle
+    els.autowaterToggle.checked = plant.auto_water || false;
+    updateAutoWaterUI(plant.auto_water || false);
+    
     // Start WebSocket
     connectWebSocket(plant.id);
 }
@@ -477,6 +490,48 @@ async function sendPumpCommand(action) {
         }
     } catch (err) {
         console.error("Pump command failed", err);
+    }
+}
+
+// ─── Auto-Watering ─────────────────────────────────────────────────
+async function handleAutoWaterToggle() {
+    if (!currentPlant) return;
+    const enabled = els.autowaterToggle.checked;
+    
+    try {
+        const res = await fetch(`/api/plants/${currentPlant.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auto_water: enabled })
+        });
+        
+        if (res.ok) {
+            currentPlant.auto_water = enabled;
+            updateAutoWaterUI(enabled);
+        } else {
+            // Revert toggle on failure
+            els.autowaterToggle.checked = !enabled;
+            const data = await res.json();
+            alert(`Failed to update auto-watering: ${data.detail || 'Unknown error'}`);
+        }
+    } catch (err) {
+        els.autowaterToggle.checked = !enabled;
+        console.error("Auto-water toggle failed", err);
+    }
+}
+
+function updateAutoWaterUI(enabled) {
+    if (enabled) {
+        els.autowaterIcon.textContent = '💧';
+        els.autowaterStateText.textContent = 'ON';
+        els.autowaterStateText.classList.add('active');
+        const min = currentPlant ? currentPlant.ideal_moisture_min : '??';
+        els.autowaterDesc.textContent = `Active — will pump when soil moisture drops below ${min}%.`;
+    } else {
+        els.autowaterIcon.textContent = '🌊';
+        els.autowaterStateText.textContent = 'OFF';
+        els.autowaterStateText.classList.remove('active');
+        els.autowaterDesc.textContent = 'Pump activates automatically when soil moisture drops below the ideal minimum.';
     }
 }
 

@@ -40,6 +40,7 @@ async def init_db():
             light_preference    TEXT,
             watering_frequency  TEXT,
             notes               TEXT,
+            auto_water          BOOLEAN DEFAULT 0,
             created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -112,6 +113,13 @@ async def init_db():
         """)
 
     await db.commit()
+
+    # Migration: Add auto_water column if it doesn't exist
+    cursor = await db.execute("PRAGMA table_info(plants)")
+    columns = [row[1] for row in await cursor.fetchall()]
+    if "auto_water" not in columns:
+        await db.execute("ALTER TABLE plants ADD COLUMN auto_water BOOLEAN DEFAULT 0")
+        await db.commit()
 
 
 async def close_db():

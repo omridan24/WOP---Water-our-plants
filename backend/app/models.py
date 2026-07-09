@@ -41,6 +41,7 @@ class PlantCreate(BaseModel):
     light_preference: Optional[str] = None
     watering_frequency: Optional[str] = None
     notes: Optional[str] = None
+    auto_water: bool = False
 
 
 class PlantUpdate(BaseModel):
@@ -55,6 +56,7 @@ class PlantUpdate(BaseModel):
     light_preference: Optional[str] = None
     watering_frequency: Optional[str] = None
     notes: Optional[str] = None
+    auto_water: Optional[bool] = None
 
 
 class PlantResponse(BaseModel):
@@ -71,6 +73,7 @@ class PlantResponse(BaseModel):
     light_preference: Optional[str] = None
     watering_frequency: Optional[str] = None
     notes: Optional[str] = None
+    auto_water: bool = False
     created_at: Optional[datetime] = None
     # Live data (populated when available)
     latest_reading: Optional[SensorReading] = None

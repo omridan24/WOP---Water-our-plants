@@ -48,6 +48,9 @@ class SensorPostData(BaseModel):
 # Throttle database writes to once per minute per plant
 _last_store_time: dict[int, float] = {}
 
+# Track which plants have auto-watering actively pumping (to avoid spamming PUMP_ON)
+_auto_water_active: set[int] = set()
+
 @router.post("/api/devices/{device_id}/readings")
 async def post_device_reading(device_id: str, data: SensorPostData):
     """
@@ -87,7 +90,25 @@ async def post_device_reading(device_id: str, data: SensorPostData):
         # 2. Broadcast to active WebSockets for live UI updates
         await broadcast_sensor_data(plant_id, sensor_data)
         
-        # 3. Retrieve any pending commands for this ESP32
+        # 3. Auto-watering logic
+        if p.get("auto_water"):
+            soil_pct = round((data.soil_moisture / 1023) * 100, 1)
+            moisture_min = p.get("ideal_moisture_min", 30)
+            if soil_pct < moisture_min and not data.pump_active:
+                # Soil is too dry — start watering
+                if plant_id not in _auto_water_active:
+                    _auto_water_active.add(plant_id)
+                    state.queue_command(plant_id, "PUMP_ON")
+                    logger.info("Auto-water: PUMP_ON for plant %d (soil=%.1f%% < min=%d%%)", plant_id, soil_pct, moisture_min)
+            else:
+                # Soil is moist enough — stop if we started it
+                if plant_id in _auto_water_active:
+                    _auto_water_active.discard(plant_id)
+                    if data.pump_active:
+                        state.queue_command(plant_id, "PUMP_OFF")
+                        logger.info("Auto-water: PUMP_OFF for plant %d (soil=%.1f%% >= min=%d%%)", plant_id, soil_pct, moisture_min)
+        
+        # 4. Retrieve any pending commands for this ESP32
         cmds = state.get_and_clear_commands(plant_id)
         all_commands.extend(cmds)
         

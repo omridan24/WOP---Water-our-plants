@@ -20,7 +20,7 @@
                 <span class="logo-subtitle">Water Our Plants</span>
             </div>
             <div class="header-actions">
-                <button class="btn btn-ghost" id="btn-ble-status" title="BLE Status">
+                <button class="btn btn-ghost" id="btn-ble-status" title="WiFi Status">
                     <span class="ble-indicator" id="ble-indicator"></span>
                     <span id="ble-status-text">Checking...</span>
                 </button>
@@ -114,6 +114,18 @@
                         <button class="btn btn-danger" id="btn-pump-off">⏹ Pump OFF</button>
                     </div>
                 </div>
+                <div class="gauge-card gauge-card-autowater">
+                    <div class="gauge-label">Auto Watering</div>
+                    <div class="autowater-status">
+                        <span class="autowater-icon" id="autowater-icon">🌊</span>
+                        <span class="autowater-state" id="autowater-state-text">OFF</span>
+                    </div>
+                    <p class="autowater-desc" id="autowater-desc">Pump activates automatically when soil moisture drops below the ideal minimum.</p>
+                    <label class="toggle-switch" for="autowater-toggle">
+                        <input type="checkbox" id="autowater-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
             </div>
 
             <!-- Sensor History Chart -->
@@ -136,7 +148,7 @@
                 <h3>Device Info</h3>
                 <div class="info-grid">
                     <div class="info-item">
-                        <span class="info-label">BLE Address</span>
+                        <span class="info-label">Device Address</span>
                         <span class="info-value" id="detail-ble-address">--</span>
                     </div>
                     <div class="info-item">

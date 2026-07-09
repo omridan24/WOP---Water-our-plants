@@ -34,8 +34,11 @@ async def _plant_to_response(plant: dict) -> dict:
     if addr and addr in state.active_devices:
         ble_connected = True
 
-    # Get the latest reading from DB
+    # Get the latest reading from DB and compute percentage fields for the frontend
     latest_reading = await db.get_latest_reading(plant["id"])
+    if latest_reading:
+        latest_reading["soil_moisture_pct"] = round((latest_reading["soil_moisture"] / 1023) * 100, 1)
+        latest_reading["water_depth_pct"] = round((latest_reading["water_depth"] / 100) * 100, 1)
 
     return {
         "id": plant["id"],
@@ -50,6 +53,7 @@ async def _plant_to_response(plant: dict) -> dict:
         "light_preference": plant.get("light_preference"),
         "watering_frequency": plant.get("watering_frequency"),
         "notes": plant.get("notes"),
+        "auto_water": bool(plant.get("auto_water", False)),
         "created_at": plant.get("created_at"),
         "latest_reading": latest_reading,
         "ble_connected": ble_connected,
